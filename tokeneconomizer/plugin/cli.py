@@ -515,12 +515,12 @@ def cmd_fold(args):
 
 def cmd_backfill(args):
     """Fold the agent's earlier session logs into what is learned (see plugin/backfill.py)."""
-    done = backfill.run(dict(os.environ), args.host, paid=args.paid, limit=args.limit,
+    done = backfill.run(dict(os.environ), args.cwd, args.host, paid=args.paid, limit=args.limit,
                         log=print if args.verbose else None)
     if done is None:
         print("another backfill is running")
         return 1
-    print(f"{done['found']} finished session(s) found in the {args.host} history: "
+    print(f"{done['found']} finished session(s) found in this repository's {args.host} history: "
           f"{done['folded']} folded"
           + (f" into {', '.join(done['repos'])}" if done["repos"] else "")
           + f", {done['skipped']} already learned or unreadable")

@@ -2,17 +2,19 @@
 
 The hooks only see sessions that run while the plugin is installed. This reads the agent's own
 session logs (Claude Code: `~/.claude/projects/*/<session id>.jsonl`) and folds each finished one
-into the repository its log says it ran in, oldest first, exactly as `fold.fold_session` folds a
+that ran in one repository (the one `--cwd` names) into it, oldest first, exactly as `fold.fold_session` folds a
 live one. From then on the hooks keep learning as before.
 
   * A session is folded once (`folded.json`), so a re-run, or a session the hooks also saw, is
     never counted twice.
   * A log still being written (touched within `fold.STALE_S`) is left for its own SessionEnd.
   * A session whose directory no longer exists has no repository to learn about; it is skipped.
+  * Other repositories' sessions are left alone, so a repository learns from its history only
+    where the plugin is in use.
   * The paid proposer is not run unless asked (`paid=True`): a backfill can be hundreds of
     sessions, and the free layer learns from every one of them.
 
-`maybe_start` runs it once, detached, from the first SessionStart after install.
+`maybe_start` runs it once per repository, detached, from that repository's first SessionStart.
 """
 import dataclasses
 import glob
@@ -23,7 +25,7 @@ from datetime import datetime
 
 from . import fold, repos
 from .context import LiveContext
-from .paths import state_root
+from .paths import repo_identity, state_root
 from .store import Store
 
 HOSTS = ("claude",)
@@ -75,13 +77,14 @@ def discover(env, now=None, quiet_s=fold.STALE_S):
     return sorted(out)
 
 
-def run(env, host_name="claude", paid=False, limit=0, log=None):
-    """Fold every unfolded finished session in the history. Returns a summary dict, or None when
+def run(env, cwd, host_name="claude", paid=False, limit=0, log=None):
+    """Fold every unfolded finished session of the repository `cwd` is in. Returns a summary dict, or None when
     another backfill holds the lock."""
     from . import hosts
     host = hosts.HOSTS[host_name]()
     log = log or (lambda msg: None)
-    found = discover(env)
+    key = repo_identity(cwd, env).key
+    found = [f for f in discover(env) if repo_identity(f[3], env).key == key]
     if limit:
         found = found[-limit:]
     summary = {"found": len(found), "folded": 0, "skipped": 0, "repos": set()}
@@ -130,16 +133,13 @@ def _context(host, cwd, env, paid):
 
 
 def maybe_start(ctx):
-    """On the first SessionStart after install, fold the agent's earlier sessions in a detached
-    process. Once per state root and agent; `te backfill` runs it again by hand."""
+    """On a repository's first SessionStart, fold the agent's earlier sessions of that repository in a detached
+    process. Once per repository and agent; `te backfill` runs it again by hand."""
     if ctx.host.name not in HOSTS or not ctx.config.enabled:
         return False
-    store = Store(ctx.root)
-    done = store.read(MARKER) or {}
-    if ctx.host.name in done or ctx.env.get("TE_BACKFILL") == "0":
+    if ctx.store.read(MARKER) or ctx.env.get("TE_BACKFILL") == "0":
         return False
-    done[ctx.host.name] = {"started": time.time()}
-    store.write(MARKER, done)
+    ctx.store.write(MARKER, {"started": time.time()})
     if ctx.env.get("TE_FOLD_SYNC") == "1":
-        return bool(run(ctx.env, ctx.host.name))
+        return bool(run(ctx.env, ctx.repo.root, ctx.host.name))
     return bool(ctx.spawn(["backfill"], "backfill.log"))
