@@ -42,7 +42,7 @@ import sys
 import time
 
 from .. import loopguard
-from . import accounting, denylist, fold, hosts, paths, repomap, repos, sidecall, toolcheck
+from . import accounting, backfill, denylist, fold, hosts, paths, repomap, repos, sidecall, toolcheck
 from .config import canonical, unset_config, write_config
 from .context import LiveContext
 from .paths import state_root
@@ -513,6 +513,20 @@ def cmd_fold(args):
     return 0
 
 
+def cmd_backfill(args):
+    """Fold the agent's earlier session logs into what is learned (see plugin/backfill.py)."""
+    done = backfill.run(dict(os.environ), args.host, paid=args.paid, limit=args.limit,
+                        log=print if args.verbose else None)
+    if done is None:
+        print("another backfill is running")
+        return 1
+    print(f"{done['found']} finished session(s) found in the {args.host} history: "
+          f"{done['folded']} folded"
+          + (f" into {', '.join(done['repos'])}" if done["repos"] else "")
+          + f", {done['skipped']} already learned or unreadable")
+    return 0
+
+
 def cmd_judge(args):
     """The detached half of the stuck judge (see plugin/judge.py); not for people."""
     from . import judge
@@ -736,6 +750,11 @@ def build_parser():
     p.add_argument("--session", action="append")
     p.add_argument("--verbose", action="store_true")
     p.set_defaults(fn=cmd_fold)
+    p = add("backfill")
+    p.add_argument("--paid", action="store_true", help="also run the paid proposer")
+    p.add_argument("--limit", type=int, default=0, help="only the newest N sessions")
+    p.add_argument("--verbose", action="store_true")
+    p.set_defaults(fn=cmd_backfill)
     p = add("judge")
     p.add_argument("--session", required=True)
     p.add_argument("--job", required=True)
